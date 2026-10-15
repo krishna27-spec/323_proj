@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chatter signal viewer</title>
+<style>
+:root{
+  --bg:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781; --grid:#e4e3df; --line:#d6d5d0;
+  --before:#2a78d6; --after:#eb6834; --removed:#1baf7a; --score:#0b0b0b;
+  --air:#c3c2b7; --stable:#2a78d6; --uncertain:#eda100; --chatter:#e34948;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0d0d0d; --surface:#1a1a19; --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781; --grid:#2b2b29; --line:#383835;
+    --before:#3987e5; --after:#d95926; --removed:#199e70; --score:#ffffff;
+    --air:#52514e; --stable:#3987e5; --uncertain:#c98500; --chatter:#e66767;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px}
+.row{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+h1{font-size:16px;margin:0 8px 0 0}
+.group{display:flex;align-items:center;gap:6px}
+.group>span{color:var(--ink2);font-size:12px}
+button{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+button:hover{border-color:var(--muted)}
+button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+label.chk{display:flex;align-items:center;gap:5px;color:var(--ink2);font-size:13px;cursor:pointer}
+#readout{margin-top:8px;font-variant-numeric:tabular-nums;color:var(--ink2);font-size:13px;display:flex;flex-wrap:wrap;gap:4px 18px;min-height:20px}
+#readout b{color:var(--ink);font-weight:600}
+.dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:baseline}
+main{padding:10px 16px 30px;position:relative}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:8px;position:relative}
+.panel h2{font-size:13px;margin:0;padding:6px 10px 0;font-weight:600;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.panel h2 small{font-weight:400;color:var(--ink2)}
+canvas{display:block;width:100%;touch-action:none}
+.time canvas{cursor:crosshair}
+#cursor{position:absolute;top:0;bottom:0;width:1px;background:var(--muted);pointer-events:none;display:none;z-index:2}
+.hint{color:var(--ink2);font-size:12px;margin:2px 0 10px}
+.spec{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media (max-width:900px){.spec{grid-template-columns:1fr}}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-weight:400;color:var(--ink2);font-size:12px}
+#status{color:var(--ink2);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>Chatter signal viewer</h1>
+    <div class="group"><span>Run</span><div id="runs" class="group"></div></div>
+    <div class="group"><span>Axis</span><div id="axes" class="group"></div></div>
+    <div class="group"><span>View</span>
+      <button id="vAll">Whole run</button><button id="vCut">Cutting part</button><button id="vAir">No cutting</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="sameScale"> Removed on the same scale</label>
+    <span id="status"></span>
+  </div>
+  <div id="readout"></div>
+</header>
+<main>
+  <div class="hint">Scroll to zoom in time, drag to pan, double-click to reset. Shift + drag selects a time range to zoom into. The spectra at the bottom are computed from whatever time range is on screen.</div>
+  <div id="timewrap" style="position:relative">
+    <div id="cursor"></div>
+    <div class="panel time"><h2><span><span class="dot" style="background:var(--before)"></span>Before</span><small>raw signal, no-cutting mean removed</small></h2><canvas id="cBefore" height="170"></canvas></div>
+    <div class="panel time"><h2><span><span class="dot" style="background:var(--after)"></span>After</span><small>denoised, same vertical scale as Before</small></h2><canvas id="cAfter" height="170"></canvas></div>
+    <div class="panel time"><h2><span><span class="dot" style="background:var(--removed)"></span>Removed</span><small id="remNote">before − after, own vertical scale</small></h2><canvas id="cRemoved" height="140"></canvas></div>
+    <div class="panel time"><h2><span>Chatter score and label</span><small>entropy drop, mean of X, Y, Z</small>
+      <span class="legend">
+        <span><span class="dot" style="background:var(--air)"></span>no cutting</span>
+        <span><span class="dot" style="background:var(--stable)"></span>stable</span>
+        <span><span class="dot" style="background:var(--uncertain)"></span>uncertain</span>
+        <span><span class="dot" style="background:var(--chatter)"></span>chatter</span>
+      </span></h2><canvas id="cScore" height="150"></canvas></div>
+    <div class="panel time" id="pModels"><h2><span>Model labels</span><small id="modelNote">trained on the public turning data only, first seed; the models can only answer stable or chatter</small>
+      <label class="chk"><input type="checkbox" id="gateAir" checked> Grey out where the rule says no cutting</label></h2><canvas id="cModels" height="60"></canvas></div>
+  </div>
+  <div class="row" style="margin:14px 0 6px">
+    <b>Spectrum of the time range on screen</b>
+    <div class="group"><span>Frequency range</span><button id="f10" class="on">0–10 kHz</button><button id="f1">0–1 kHz</button><button id="f04">0–450 Hz</button></div>
+    <label class="chk"><input type="checkbox" id="harm" checked> Mark spindle harmonics</label>
+    <span id="specInfo" style="color:var(--ink2);font-size:12px"></span>
+  </div>
+  <div class="spec">
+    <div class="panel"><h2><span><span class="dot" style="background:var(--before)"></span>Before</span><small>power spectral density against frequency (Hz)</small></h2><canvas id="sBefore" height="260"></canvas></div>
+    <div class="panel"><h2><span><span class="dot" style="background:var(--after)"></span>After</span><small>same vertical scale as Before</small></h2><canvas id="sAfter" height="260"></canvas></div>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const ML = 66, MR = 14, MT = 8, MB = 24;          // plot margins (CSS px)
+const AXES = ['X (feed)', 'Y (normal to feed)', 'Z (axial)'];
+const LABEL_VAR = {'0': '--air', '1': '--stable', '2': '--chatter', '-1': '--uncertain'};
+const LABEL_NAME = {'0': 'no cutting', '1': 'stable', '2': 'chatter', '-1': 'uncertain'};
+let meta, FS = 20000, cache = {}, S = {run: '20k', axis: 0, x0: 0, x1: 1, fmax: 10000};
+let D = null;       // {before, after, removed (Float32Array for the current axis), lab, n, dur}
+
+/* ---------- loading ---------- */
+async function loadRun(name) {
+  if (!cache[name]) {
+    $('status').textContent = 'loading ' + name + ' …';
+    const [b, a, lab, pred] = await Promise.all([
+      fetch(`data/${name}_before.f32`).then(r => r.arrayBuffer()),
+      fetch(`data/${name}_after.f32`).then(r => r.arrayBuffer()),
+      fetch(`data/${name}_labels.json`).then(r => r.json()),
+      fetch(`data/${name}_pred.json`).then(r => r.ok ? r.json() : null).catch(() => null)]);   // model labels are optional
+    cache[name] = {before: new Float32Array(b), after: new Float32Array(a), lab, pred};
+    $('status').textContent = '';
+  }
+  return cache[name];
+}
+function setAxis() {
+  const c = cache[S.run], n = meta.runs[S.run].n, o = S.axis * n;
+  const before = c.before.subarray(o, o + n), after = c.after.subarray(o, o + n);
+  const removed = new Float32Array(n);
+  for (let i = 0; i < n; i++) removed[i] = before[i] - after[i];
+  D = {before, after, removed, lab: c.lab, pred: c.pred, n, dur: n / FS};
+}
+async function selectRun(name, keepView) {
+  S.run = name; await loadRun(name); setAxis();
+  if (!keepView) { S.x0 = 0; S.x1 = D.dur; }
+  syncButtons(); drawAll(); scheduleSpectrum();
+}
+
+/* ---------- canvas helpers ---------- */
+function prep(cv) {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = +cv.getAttribute('height');
+  cv.style.height = h + 'px';
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  g.font = '11px system-ui, sans-serif';
+  return {g, w, h, pw: w - ML - MR, ph: h - MT - MB};
+}
+function niceStep(span, target) {
+  const raw = span / target, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p;
+  return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p;
+}
+function fmt(v, step) {
+  const d = Math.max(0, Math.min(6, -Math.floor(Math.log10(step) + 1e-9)));
+  return v.toFixed(d);
+}
+function xAxis(c, x0, x1, unit) {
+  const {g, pw, ph} = c, step = niceStep(x1 - x0, Math.max(3, pw / 110));
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  for (let v = Math.ceil(x0 / step) * step; v <= x1 + step * 1e-6; v += step) {
+    const px = ML + (v - x0) / (x1 - x0) * pw;
+    g.strokeStyle = css('--grid'); g.lineWidth = 1; g.beginPath(); g.moveTo(px + .5, MT); g.lineTo(px + .5, MT + ph); g.stroke();
+    g.fillStyle = css('--muted'); g.fillText(fmt(v, step) + (unit || ''), px, MT + ph + 5);
+  }
+}
+function yAxis(c, y0, y1, fmtFn) {
+  const {g, pw, ph} = c, step = niceStep(y1 - y0, Math.max(2, ph / 34));
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (let v = Math.ceil(y0 / step) * step; v <= y1 + step * 1e-6; v += step) {
+    const py = MT + ph - (v - y0) / (y1 - y0) * ph;
+    g.strokeStyle = css('--grid'); g.lineWidth = 1; g.beginPath(); g.moveTo(ML, py + .5); g.lineTo(ML + pw, py + .5); g.stroke();
+    g.fillStyle = css('--muted'); g.fillText(fmtFn ? fmtFn(v, step) : fmt(v, step), ML - 7, py);
+  }
+}
+function frame(c) { const {g, pw, ph} = c; g.strokeStyle = css('--line'); g.lineWidth = 1; g.strokeRect(ML + .5, MT + .5, pw, ph); }
+
+/* ---------- time-domain traces ---------- */
+function visRange() { return [Math.max(0, Math.floor(S.x0 * FS)), Math.min(D.n, Math.ceil(S.x1 * FS) + 1)]; }
+function scan(arr, pw) {
+  // per-pixel-column min and max of the samples on screen
+  const cols = Math.max(1, Math.floor(pw)), mins = new Float32Array(cols).fill(NaN), maxs = new Float32Array(cols).fill(NaN);
+  const [i0, i1] = visRange(), span = S.x1 - S.x0; let lo = Infinity, hi = -Infinity;
+  for (let i = i0; i < i1; i++) {
+    const p = Math.floor((i / FS - S.x0) / span * cols); if (p < 0 || p >= cols) continue;
+    const v = arr[i];
+    if (!(v >= mins[p])) mins[p] = v; if (!(v <= maxs[p])) maxs[p] = v;
+    if (v < lo) lo = v; if (v > hi) hi = v;
+  }
+  return {mins, maxs, lo, hi, cols, count: i1 - i0, i0, i1};
+}
+function padRange(lo, hi) {
+  if (!isFinite(lo)) return [-1, 1];
+  const a = Math.max(Math.abs(lo), Math.abs(hi), 1e-6) * 1.08; return [-a, a];   // symmetric around zero
+}
+function labelStrip(c, top, height, labels) {
+  const {g, pw} = c, t = D.lab.t, L = {label: labels || D.lab.label}, half = (t[1] - t[0]) / 2, span = S.x1 - S.x0;
+  for (let i = 0; i < t.length; ) {
+    let j = i; while (j + 1 < t.length && L.label[j + 1] === L.label[i]) j++;
+    const a = t[i] - half, b = t[j] + half;
+    if (b > S.x0 && a < S.x1) {
+      const pa = ML + Math.max(0, (a - S.x0) / span) * pw, pb = ML + Math.min(1, (b - S.x0) / span) * pw;
+      g.fillStyle = css(LABEL_VAR[L.label[i]]); g.fillRect(pa, top, Math.max(1, pb - pa), height);
+    }
+    i = j + 1;
+  }
+}
+function drawTrace(cv, arr, colorVar, forced) {
+  const c = prep(cv), {g, pw, ph} = c, sc = scan(arr, pw);
+  const [y0, y1] = forced || padRange(sc.lo, sc.hi);
+  xAxis(c, S.x0, S.x1, ' s'); yAxis(c, y0, y1);
+  const Y = v => MT + ph - (v - y0) / (y1 - y0) * ph;
+  g.save(); g.beginPath(); g.rect(ML, MT, pw, ph); g.clip();
+  g.strokeStyle = g.fillStyle = css(colorVar);
+  if (sc.count <= sc.cols * 1.5) {                 // zoomed in far enough to draw every sample
+    g.lineWidth = 1.5; g.beginPath();
+    for (let i = sc.i0; i < sc.i1; i++) { const px = ML + (i / FS - S.x0) / (S.x1 - S.x0) * pw, py = Y(arr[i]); i === sc.i0 ? g.moveTo(px, py) : g.lineTo(px, py); }
+    g.stroke();
+    if (sc.count <= sc.cols / 6) for (let i = sc.i0; i < sc.i1; i++) { g.beginPath(); g.arc(ML + (i / FS - S.x0) / (S.x1 - S.x0) * pw, Y(arr[i]), 2.5, 0, 6.3); g.fill(); }
+  } else {                                          // one min-max bar per pixel column
+    for (let p = 0; p < sc.cols; p++) { if (isNaN(sc.mins[p])) continue; const a = Y(sc.maxs[p]), b = Y(sc.mins[p]); g.fillRect(ML + p, a, 1, Math.max(1, b - a)); }
+  }
+  g.strokeStyle = css('--muted'); g.lineWidth = 1; g.beginPath(); g.moveTo(ML, Y(0) + .5); g.lineTo(ML + pw, Y(0) + .5); g.stroke();
+  g.restore();
+  labelStrip(c, MT, 4); frame(c);
+  return [y0, y1];
+}
+function drawScore() {
+  const c = prep($('cScore')), {g, pw, ph} = c, L = D.lab, y0 = -0.08, y1 = 0.56, stripH = 14, plotH = ph - stripH - 4;
+  const cc = Object.assign({}, c, {ph: plotH});
+  xAxis(c, S.x0, S.x1, ' s'); yAxis(cc, y0, y1);
+  const Y = v => MT + plotH - (v - y0) / (y1 - y0) * plotH, X = t => ML + (t - S.x0) / (S.x1 - S.x0) * pw;
+  g.save(); g.beginPath(); g.rect(ML, MT, pw, ph); g.clip();
+  g.setLineDash([5, 4]); g.strokeStyle = css('--muted'); g.fillStyle = css('--ink2'); g.textAlign = 'right'; g.textBaseline = 'bottom';
+  for (const [th, txt] of [[meta.thresholds.stable, 'below: stable'], [meta.thresholds.chatter, 'above: chatter']]) {
+    g.beginPath(); g.moveTo(ML, Y(th) + .5); g.lineTo(ML + pw, Y(th) + .5); g.stroke(); g.fillText(th.toFixed(2) + '  ' + txt, ML + pw - 6, Y(th) - 2);
+  }
+  g.setLineDash([]); g.strokeStyle = css('--score'); g.lineWidth = 2; g.beginPath(); let first = true;
+  for (let i = 0; i < L.t.length; i++) { if (L.t[i] < S.x0 - 0.1 || L.t[i] > S.x1 + 0.1) continue; first ? g.moveTo(X(L.t[i]), Y(L.drop[i])) : g.lineTo(X(L.t[i]), Y(L.drop[i])); first = false; }
+  g.stroke(); g.restore();
+  labelStrip(c, MT + ph - stripH, stripH); frame(c);
+}
+function modelLabels(set) {
+  // the models have no "no cutting" class; optionally take it from the rule
+  return $('gateAir').checked ? set.label.map((v, i) => D.lab.label[i] === 0 ? 0 : v) : set.label;
+}
+function drawModels() {
+  const sets = D.pred ? D.pred.sets : [], rows = [{name: 'Rule label (entropy drop), for comparison', label: D.lab.label}].concat(sets.map(s => ({name: s.name, label: modelLabels(s)})));
+  $('pModels').style.display = sets.length ? '' : 'none'; if (!sets.length) return;
+  const rowH = 32, stripH = 13, cv = $('cModels'); cv.setAttribute('height', MT + rows.length * rowH + MB);
+  const c = prep(cv), {g, pw, ph} = c;
+  xAxis(c, S.x0, S.x1, ' s');
+  rows.forEach((r, k) => {
+    const top = MT + k * rowH;
+    g.fillStyle = css('--ink2'); g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(r.name, ML + 2, top + 3);
+    labelStrip(c, top + rowH - stripH - 2, stripH, r.label);
+  });
+  frame(c);
+}
+function drawAll() {
+  if (!D) return;
+  const yr = drawTrace($('cBefore'), D.before, '--before');
+  drawTrace($('cAfter'), D.after, '--after', yr);
+  const same = $('sameScale').checked;
+  drawTrace($('cRemoved'), D.removed, '--removed', same ? yr : null);
+  $('remNote').textContent = same ? 'before − after, same vertical scale as Before' : 'before − after, own vertical scale (look at the axis numbers)';
+  drawScore(); drawModels();
+}
+
+/* ---------- spectrum of the visible range ---------- */
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) { let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) { let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) { const a = i + k, b = a + len / 2, xr = re[b] * cr - im[b] * ci, xi = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - xr; im[b] = im[a] - xi; re[a] += xr; im[a] += xi; const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t; } }
+  }
+}
+function welch(arr, i0, i1) {
+  const n = i1 - i0; let N = 8192; while (N > n) N >>= 1; if (N < 128) return null;
+  const segs = Math.min(64, Math.max(1, Math.floor((n - N) / (N / 2)) + 1)), stride = segs > 1 ? (n - N) / (segs - 1) : 0;
+  const win = new Float64Array(N); let w2 = 0; for (let i = 0; i < N; i++) { win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N); w2 += win[i] * win[i]; }
+  const P = new Float64Array(N / 2 + 1), re = new Float64Array(N), im = new Float64Array(N);
+  for (let s = 0; s < segs; s++) {
+    const o = i0 + Math.floor(s * stride); let m = 0; for (let i = 0; i < N; i++) m += arr[o + i]; m /= N;
+    for (let i = 0; i < N; i++) { re[i] = (arr[o + i] - m) * win[i]; im[i] = 0; }
+    fft(re, im); for (let k = 0; k <= N / 2; k++) P[k] += re[k] * re[k] + im[k] * im[k];
+  }
+  for (let k = 0; k <= N / 2; k++) P[k] *= 2 / (FS * w2 * segs);
+  return {P, N, df: FS / N, segs};
+}
+let SP = null, specTimer = null;
+function scheduleSpectrum() { clearTimeout(specTimer); specTimer = setTimeout(computeSpectrum, 140); }
+function computeSpectrum() {
+  if (!D) return; const [i0, i1] = visRange();
+  const b = welch(D.before, i0, i1), a = welch(D.after, i0, i1);
+  SP = b && a ? {b, a} : null;
+  $('specInfo').textContent = SP ? `${(S.x0).toFixed(3)}–${(S.x1).toFixed(3)} s, resolution ${SP.b.df.toFixed(1)} Hz, ${SP.b.segs} averaged window${SP.b.segs > 1 ? 's' : ''}` : 'zoomed in too far for a spectrum (need at least 128 samples on screen)';
+  drawSpectra();
+}
+function specRange() {
+  let hi = -Infinity, lo = Infinity; const kmax = Math.min(SP.b.P.length - 1, Math.floor(S.fmax / SP.b.df));
+  for (const s of [SP.b, SP.a]) for (let k = 1; k <= kmax; k++) { const v = Math.log10(s.P[k] + 1e-30); if (v > hi) hi = v; if (v < lo) lo = v; }
+  lo = Math.max(lo, hi - 7); return [Math.floor(lo), Math.ceil(hi + 0.1)];
+}
+function drawSpectrum(cv, sp, colorVar, yr) {
+  const c = prep(cv), {g, pw, ph} = c; if (!SP) { frame(c); return; }
+  const [y0, y1] = yr; xAxis(c, 0, S.fmax, ''); yAxis(c, y0, y1, v => '1e' + Math.round(v));
+  const X = f => ML + f / S.fmax * pw, Y = v => MT + ph - (v - y0) / (y1 - y0) * ph;
+  g.save(); g.beginPath(); g.rect(ML, MT, pw, ph); g.clip();
+  if ($('harm').checked) {
+    const fsp = meta.runs[S.run].rpm / 60; g.strokeStyle = css('--muted'); g.setLineDash([2, 4]); g.lineWidth = 1;
+    for (let f = fsp; f <= S.fmax; f += fsp) { g.beginPath(); g.moveTo(X(f) + .5, MT); g.lineTo(X(f) + .5, MT + ph); g.stroke(); }
+    g.setLineDash([]);
+  }
+  g.strokeStyle = css(colorVar); g.lineWidth = 1.4; g.beginPath();
+  const kmax = Math.min(sp.P.length - 1, Math.ceil(S.fmax / sp.df));
+  for (let k = 1; k <= kmax; k++) { const px = X(k * sp.df), py = Y(Math.max(y0, Math.log10(sp.P[k] + 1e-30))); k === 1 ? g.moveTo(px, py) : g.lineTo(px, py); }
+  g.stroke(); g.restore(); frame(c);
+}
+function drawSpectra() { const yr = SP ? specRange() : [0, 1]; drawSpectrum($('sBefore'), SP && SP.b, '--before', yr); drawSpectrum($('sAfter'), SP && SP.a, '--after', yr); }
+
+/* ---------- interaction ---------- */
+function clampView() {
+  let span = Math.min(D.dur, Math.max(40 / FS, S.x1 - S.x0));
+  if (S.x0 < 0) S.x0 = 0; if (S.x0 + span > D.dur) S.x0 = D.dur - span; S.x1 = S.x0 + span;
+}
+function setView(a, b) { S.x0 = a; S.x1 = b; clampView(); drawAll(); scheduleSpectrum(); }
+function tAt(cv, ev) { const r = cv.getBoundingClientRect(), pw = r.width - ML - MR; return S.x0 + (ev.clientX - r.left - ML) / pw * (S.x1 - S.x0); }
+function showReadout(t) {
+  if (!D || t < 0 || t > D.dur) { $('readout').innerHTML = ''; $('cursor').style.display = 'none'; return; }
+  const i = Math.min(D.n - 1, Math.max(0, Math.round(t * FS))), L = D.lab;
+  const j = Math.min(L.t.length - 1, Math.max(0, Math.round((t - L.t[0]) / (L.t[1] - L.t[0]))));
+  const f = v => (v >= 0 ? ' ' : '') + v.toFixed(5);
+  $('readout').innerHTML = `<span>time <b>${t.toFixed(4)} s</b></span>` +
+    `<span><span class="dot" style="background:var(--before)"></span>before <b>${f(D.before[i])}</b></span>` +
+    `<span><span class="dot" style="background:var(--after)"></span>after <b>${f(D.after[i])}</b></span>` +
+    `<span><span class="dot" style="background:var(--removed)"></span>removed <b>${f(D.removed[i])}</b></span>` +
+    `<span>score <b>${L.drop[j].toFixed(3)}</b></span>` +
+    `<span>level <b>${L.level[j].toFixed(1)}×</b> no-cutting</span>` +
+    `<span><span class="dot" style="background:var(${LABEL_VAR[L.label[j]]})"></span><b>${LABEL_NAME[L.label[j]]}</b></span>` +
+    (D.pred ? D.pred.sets.map(s => { const v = modelLabels(s)[j]; return `<span>${s.short}: <span class="dot" style="background:var(${LABEL_VAR[v]})"></span><b>${LABEL_NAME[v]}</b></span>`; }).join('') : '');
+}
+function wireTime(cv) {
+  let drag = null;
+  cv.addEventListener('wheel', ev => { ev.preventDefault(); const t = tAt(cv, ev), k = Math.pow(1.0018, ev.deltaY); setView(t - (t - S.x0) * k, t + (S.x1 - t) * k); }, {passive: false});
+  cv.addEventListener('pointerdown', ev => { cv.setPointerCapture(ev.pointerId); drag = {x: ev.clientX, x0: S.x0, x1: S.x1, box: ev.shiftKey, t0: tAt(cv, ev)}; });
+  cv.addEventListener('pointermove', ev => {
+    const wrap = $('timewrap').getBoundingClientRect(), r = cv.getBoundingClientRect(), t = tAt(cv, ev);
+    if (drag && !drag.box) { const dt = (ev.clientX - drag.x) / (r.width - ML - MR) * (drag.x1 - drag.x0); setView(drag.x0 - dt, drag.x1 - dt); }
+    const cur = $('cursor'), px = ev.clientX - wrap.left;
+    if (px >= ML && px <= wrap.width - MR) { cur.style.display = 'block'; cur.style.left = px + 'px'; showReadout(t); } else showReadout(-1);
+  });
+  cv.addEventListener('pointerup', ev => { if (drag && drag.box) { const t1 = tAt(cv, ev); if (Math.abs(t1 - drag.t0) > 40 / FS) setView(Math.min(t1, drag.t0), Math.max(t1, drag.t0)); } drag = null; });
+  cv.addEventListener('pointerleave', () => { if (!drag) showReadout(-1); });
+  cv.addEventListener('dblclick', () => setView(0, D.dur));
+}
+function wireSpec(cv) {
+  cv.addEventListener('pointermove', ev => {
+    if (!SP) return; const r = cv.getBoundingClientRect(), f = (ev.clientX - r.left - ML) / (r.width - ML - MR) * S.fmax;
+    if (f < 0 || f > S.fmax) return; const k = Math.max(1, Math.min(SP.b.P.length - 1, Math.round(f / SP.b.df)));
+    // report the strongest bin within 3 screen pixels, so narrow peaks are easy to hit
+    const w = Math.max(1, Math.round(3 * S.fmax / (r.width - ML - MR) / SP.b.df)); let kb = k;
+    for (let q = Math.max(1, k - w); q <= Math.min(SP.b.P.length - 1, k + w); q++) if (SP.b.P[q] > SP.b.P[kb]) kb = q;
+    const fsp = meta.runs[S.run].rpm / 60, h = (kb * SP.b.df) / fsp;
+    $('readout').innerHTML = `<span>frequency <b>${(kb * SP.b.df).toFixed(1)} Hz</b></span>` +
+      `<span>= <b>${h.toFixed(2)}×</b> spindle frequency (${fsp.toFixed(1)} Hz)</span>` +
+      `<span><span class="dot" style="background:var(--before)"></span>before <b>${SP.b.P[kb].toExponential(2)}</b></span>` +
+      `<span><span class="dot" style="background:var(--after)"></span>after <b>${SP.a.P[kb].toExponential(2)}</b></span>` +
+      `<span>kept <b>${(100 * SP.a.P[kb] / SP.b.P[kb]).toFixed(1)} %</b></span>`;
+  });
+}
+function syncButtons() {
+  for (const b of $('runs').children) b.classList.toggle('on', b.dataset.v === S.run);
+  for (const b of $('axes').children) b.classList.toggle('on', +b.dataset.v === S.axis);
+  for (const [id, f] of [['f10', 10000], ['f1', 1000], ['f04', 450]]) $(id).classList.toggle('on', S.fmax === f);
+}
+async function init() {
+  meta = await fetch('data/meta.json').then(r => r.json()); FS = meta.fs;
+  for (const name of Object.keys(meta.runs)) { const b = document.createElement('button'); b.textContent = `${name} rpm`; b.dataset.v = name; b.onclick = () => selectRun(name); $('runs').appendChild(b); }
+  AXES.forEach((a, i) => { const b = document.createElement('button'); b.textContent = a; b.dataset.v = i; b.onclick = () => { S.axis = i; setAxis(); syncButtons(); drawAll(); scheduleSpectrum(); }; $('axes').appendChild(b); });
+  $('vAll').onclick = () => setView(0, D.dur);
+  $('vCut').onclick = () => { const [a, b] = meta.runs[S.run].cut; setView(a - 1, b + 1); };
+  $('vAir').onclick = () => setView(0, Math.max(1, meta.runs[S.run].cut[0] - 0.7));
+  $('sameScale').onchange = drawAll; $('gateAir').onchange = drawAll; $('harm').onchange = drawSpectra;
+  for (const [id, f] of [['f10', 10000], ['f1', 1000], ['f04', 450]]) $(id).onclick = () => { S.fmax = f; syncButtons(); drawSpectra(); };
+  ['cBefore', 'cAfter', 'cRemoved', 'cScore', 'cModels'].forEach(id => wireTime($(id)));
+  ['sBefore', 'sAfter'].forEach(id => wireSpec($(id)));
+  window.addEventListener('resize', () => { drawAll(); drawSpectra(); });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { drawAll(); drawSpectra(); });
+  await selectRun(S.run);
+}
+init().catch(e => { $('status').textContent = 'Could not load data: ' + e.message + '. Open this page through the local server, not as a file.'; });
+</script>
+</body>
+</html>
