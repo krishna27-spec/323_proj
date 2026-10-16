@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accelerometer live scope</title>
+<style>
+:root{
+  --bg:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781; --grid:#e4e3df; --line:#d6d5d0;
+  --x:#2a78d6; --y:#eb6834; --z:#1baf7a;
+  --air:#c3c2b7; --stable:#2a78d6; --uncertain:#eda100; --chatter:#e34948; --calibrating:#898781;
+  --good:#0ca30c; --bad:#d03b3b; --rec:#d03b3b;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink2:#c3c2b7; --muted:#898781; --grid:#2b2b29; --line:#383835;
+    --x:#3987e5; --y:#d95926; --z:#199e70;
+    --air:#52514e; --stable:#3987e5; --uncertain:#c98500; --chatter:#e66767; --calibrating:#898781;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink2:#c3c2b7; --muted:#898781; --grid:#2b2b29; --line:#383835;
+  --x:#3987e5; --y:#d95926; --z:#199e70;
+  --air:#52514e; --stable:#3987e5; --uncertain:#c98500; --chatter:#e66767; --calibrating:#898781;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px}
+.row{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center}
+h1{font-size:16px;margin:0 6px 0 0}
+.group{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.group>span{color:var(--ink2);font-size:12px}
+button,select,input[type=number]{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:3px 9px}
+button{cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+button:hover{border-color:var(--muted)}
+button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button.rec.on{background:var(--rec);border-color:var(--rec);color:#fff}
+input[type=number]{width:76px}
+label.chk{display:flex;align-items:center;gap:5px;color:var(--ink2);font-size:13px;cursor:pointer}
+#status{font-size:12px;color:var(--ink2);display:flex;gap:6px;align-items:center}
+#status i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted)}
+#status.running i{background:var(--good)} #status.stopped i{background:var(--uncertain)} #status.error i{background:var(--bad)}
+main{padding:10px 16px 30px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:8px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-variant-numeric:tabular-nums}
+.tile h3{margin:0 0 4px;font-size:12px;font-weight:600;color:var(--ink2);display:flex;align-items:center;gap:6px}
+.tile .big{font-size:22px;font-weight:600}
+.tile .big small{font-size:12px;font-weight:400;color:var(--ink2)}
+.tile .sub{font-size:12px;color:var(--ink2)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:2px}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:18px;font-weight:600}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:8px;position:relative}
+.panel h2{font-size:13px;margin:0;padding:6px 10px 0;font-weight:600;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+.panel h2 small{font-weight:400;color:var(--ink2)}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-weight:400;color:var(--ink2);font-size:12px;align-items:center}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+canvas{display:block;width:100%;touch-action:none}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media (max-width:900px){.split{grid-template-columns:1fr}}
+#tip{position:fixed;z-index:10;pointer-events:none;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px;font-variant-numeric:tabular-nums;box-shadow:0 2px 8px rgba(0,0,0,.12);display:none;white-space:nowrap}
+#tip b{font-weight:600}
+.hint{color:var(--ink2);font-size:12px;margin:0 0 8px}
+@media (max-width:700px){header{position:static}}
+#err{display:none;background:var(--surface);border:1px solid var(--bad);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>Accelerometer live scope</h1>
+    <div id="status"><i></i><span>connecting…</span></div>
+    <div class="group"><span>Span</span><div id="spans" class="group"></div></div>
+    <div class="group"><span>Axes</span><div id="axes" class="group"></div></div>
+    <div class="group"><span>Y scale</span>
+      <select id="yMode"><option value="auto">auto, per axis</option><option value="shared">auto, shared</option><option value="fixed">fixed ±</option></select>
+      <input type="number" id="yFix" value="0.05" step="0.01" min="0.0001" title="half range, V" style="display:none">
+    </div>
+    <label class="chk"><input type="checkbox" id="dc" checked> Remove DC</label>
+    <button id="acq" title="Starts or stops the sampling on the DAQ">■ Stop acquisition</button>
+    <button id="pause" title="Freezes the picture only; sampling goes on">Pause view</button>
+    <button id="rec" class="rec">● Record</button>
+    <button id="recal" style="display:none" title="Spindle on, tool in the air, then click">Recalibrate rule</button>
+  </div>
+</header>
+<main>
+  <div id="err"></div>
+  <div class="tiles" id="tiles"></div>
+  <p class="hint">Hover a chart to read values. <b>Stop acquisition</b> stops the sampling and frees the DAQ; <b>Start</b> resumes it (the rule then calibrates again). Pause view only freezes the picture; data keeps arriving and is still recorded. Record saves the raw volts as an .lvm file (time, x, y, z), the same layout as the lab recordings.</p>
+  <div class="panel">
+    <h2>Time signal <small id="tInfo">volts</small><span class="legend" id="tLegend"></span><span class="legend" id="labLegend" style="margin-left:auto"></span></h2>
+    <canvas id="cTime" height="420"></canvas>
+  </div>
+  <div class="split">
+    <div class="panel">
+      <h2>Spectrum <small id="sInfo">power spectral density, dB re 1 V²/Hz</small>
+        <span class="group" style="margin-left:auto;font-weight:400">
+          <select id="fMax"><option value="1000">0–1 kHz</option><option value="2000">0–2 kHz</option><option value="5000">0–5 kHz</option><option value="10000" selected>0–10 kHz</option></select>
+          <select id="avg" title="averaging"><option value="0">no averaging</option><option value="0.7" selected>average: light</option><option value="0.93">average: heavy</option></select>
+          <select id="specWin" title="window of samples per spectrum"><option value="0.1">0.1 s</option><option value="0.25">0.25 s</option><option value="0.5" selected>0.5 s</option><option value="1">1 s</option></select>
+        </span>
+      </h2>
+      <canvas id="cSpec" height="300"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Waterfall <small>newest at the top, about 10 s, strongest of the shown axes; colour runs from the noise floor up</small></h2>
+      <canvas id="cFall" height="300"></canvas>
+    </div>
+  </div>
+</main>
+<div id="tip"></div>
+<script>
+const AX = ['X', 'Y', 'Z'], AXV = ['--x', '--y', '--z'];
+const LAB = {'no cutting': '--air', 'stable': '--stable', 'chatter': '--chatter', 'uncertain': '--uncertain', 'calibrating': '--calibrating'};
+const SPANS = [0.05, 0.2, 1, 2, 5, 10, 20];
+const BUF_S = 30, FALL_ROWS = 200;
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const $ = id => document.getElementById(id);
+
+let fs = 20000, N = BUF_S * fs, ring = null, total = 0, first = 0;   // first: oldest sample this page has
+let span = SPANS.includes(+new URLSearchParams(location.search).get('span')) ? +new URLSearchParams(location.search).get('span') : 1, show = [true, true, true], paused = false, frozenEnd = 0;
+let spec = null, specAvg = null, df = 0, rpm = null, info = null;
+let labels = [], labSeq = 0, scales = [null, null, null], dirty = true;
+let hover = null;   // {canvas, x, y}
+const fallRows = [];
+
+// ---------------------------------------------------------------- controls
+for (const s of SPANS) {
+  const b = document.createElement('button');
+  b.textContent = s < 1 ? `${s * 1000} ms` : `${s} s`;
+  b.onclick = () => { span = s; scales = [null, null, null]; syncButtons(); dirty = true; };
+  b.dataset.span = s; $('spans').append(b);
+}
+AX.forEach((a, i) => {
+  const b = document.createElement('button');
+  b.innerHTML = `<span class="dot" style="background:var(${AXV[i]})"></span> ${a}`;
+  b.onclick = () => { if (show.filter(Boolean).length > 1 || !show[i]) show[i] = !show[i]; syncButtons(); dirty = true; };
+  b.dataset.ax = i; $('axes').append(b);
+});
+$('tLegend').innerHTML = AX.map((a, i) => `<span><span class="dot" style="background:var(${AXV[i]})"></span>${a}</span>`).join('');
+function syncButtons() {
+  document.querySelectorAll('[data-span]').forEach(b => b.classList.toggle('on', +b.dataset.span === span));
+  document.querySelectorAll('[data-ax]').forEach(b => b.classList.toggle('on', show[+b.dataset.ax]));
+}
+syncButtons();
+$('yMode').onchange = () => { $('yFix').style.display = $('yMode').value === 'fixed' ? '' : 'none'; scales = [null, null, null]; dirty = true; };
+$('yFix').oninput = $('dc').onchange = $('fMax').onchange = () => { scales = [null, null, null]; dirty = true; };
+$('specWin').onchange = () => { specAvg = null; };
+$('pause').onclick = () => { paused = !paused; frozenEnd = total; $('pause').classList.toggle('on', paused); $('pause').textContent = paused ? 'Resume view' : 'Pause view'; dirty = true; };
+$('acq').onclick = () => fetch($('acq').classList.contains('on') ? '/acquire/start' : '/acquire/stop', {method: 'POST'});
+$('rec').onclick = () => fetch($('rec').classList.contains('on') ? '/record/stop' : '/record/start', {method: 'POST'});
+$('recal').onclick = () => { fetch('/recalibrate', {method: 'POST'}); labels = []; };
+addEventListener('keydown', e => { if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); $('pause').click(); } });
+
+// ---------------------------------------------------------------- data
+function b64f32(s) {
+  const bin = atob(s), u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return new Float32Array(u.buffer);
+}
+async function poll() {
+  try {
+    const r = await fetch(`/poll?since=${ring ? total : -1}&spec=${$('specWin').value}&lab=${labSeq}`);
+    const d = await r.json();
+    info = d;
+    if (!ring || d.fs !== fs) { fs = d.fs; N = BUF_S * fs; ring = AX.map(() => new Float32Array(N)); first = d.start; }
+    if (d.start > total) first = d.start;   // a gap (page was asleep): drop what came before
+    rpm = d.rpm;
+    const n = d.total - d.start;
+    if (n > 0) {
+      d.data.slice(0, AX.length).forEach((s, c) => {   // this page shows X, Y, Z only
+        const v = b64f32(s);
+        for (let k = 0; k < v.length; k++) ring[c][(d.start + k) % N] = v[k];
+      });
+      total = d.total;
+      dirty = true;
+    }
+    if (d.spec) {
+      spec = d.spec.db; df = d.spec.df;
+      const a = +$('avg').value, lin = spec.map(row => row.map(v => Math.pow(10, v / 10)));
+      if (!specAvg || specAvg[0].length !== lin[0].length || a === 0) specAvg = lin;
+      else specAvg = specAvg.map((row, c) => row.map((v, k) => a * v + (1 - a) * lin[c][k]));
+      if (!paused) pushFall();
+    }
+    for (const l of d.labels) { labels.push(l); labSeq = l.id + 1; }
+    const tMin = total / fs - BUF_S;
+    while (labels.length && labels[0].t < tMin) labels.shift();
+    updateHeader(d);
+  } catch (e) {
+    info = null; updateHeader(null);
+  }
+  setTimeout(poll, 50);
+}
+
+// ---------------------------------------------------------------- header + tiles
+function fmtV(v) {
+  const a = Math.abs(v);
+  if (a === 0) return '0';
+  if (a >= 1) return v.toFixed(3) + ' V';
+  if (a >= 1e-3) return (v * 1e3).toFixed(a >= 0.1 ? 0 : a >= 0.01 ? 1 : 2) + ' mV';
+  return (v * 1e6).toFixed(0) + ' µV';
+}
+function updateHeader(d) {
+  const st = $('status');
+  if (!d) { st.className = 'error'; st.querySelector('span').textContent = 'scope server not reachable'; return; }
+  st.className = d.status;
+  const lag = d.qsize ? ` · rule queue ${(d.qsize * 512 / fs).toFixed(1)} s behind` : '';
+  st.querySelector('span').textContent = `${d.status} · ${d.source} · ${fs / 1000} kS/s · ${(d.total / fs).toFixed(1)} s${lag}`;
+  const msg = d.error ? `Acquisition stopped, retrying every 2 s. ${d.error}` : d.notice;
+  $('err').style.display = msg ? 'block' : 'none';
+  $('err').style.borderColor = d.error ? 'var(--bad)' : 'var(--line)';
+  $('err').textContent = (d.error && d.notice ? d.notice + ' ' : '') + (msg || '');
+  const ab = $('acq');
+  ab.classList.toggle('on', !d.acquiring);
+  ab.textContent = d.acquiring ? '■ Stop acquisition' : '▶ Start acquisition';
+  $('rec').disabled = !d.acquiring;
+  const rb = $('rec');
+  rb.classList.toggle('on', d.record.on);
+  rb.textContent = d.record.on ? `■ Stop (${d.record.seconds.toFixed(0)} s)` : '● Record';
+  rb.title = d.record.path ? `last file: ${d.record.path}` : '';
+  $('recal').style.display = d.rule || d.models ? '' : 'none';
+  if ((d.rule || d.models) && !$('labLegend').innerHTML)
+    $('labLegend').innerHTML = (d.rule ? 'rule strip: ' : 'model strip (1D CNN): ') +
+      ['no cutting', 'stable', 'uncertain', 'chatter', 'calibrating'].filter(n => d.rule || ['no cutting', 'stable', 'chatter'].includes(n))
+        .map(n => `<span><span class="dot" style="background:var(${LAB[n]})"></span>${n}</span>`).join('');
+}
+function stats(c, a, b) {
+  let s = 0, s2 = 0, mn = Infinity, mx = -Infinity;
+  for (let i = a; i < b; i++) { const v = ring[c][i % N]; s += v; s2 += v * v; if (v < mn) mn = v; if (v > mx) mx = v; }
+  const n = b - a, m = s / n;
+  return {mean: m, rms: Math.sqrt(Math.max(s2 / n - m * m, 0)), pp: mx - mn, min: mn, max: mx};
+}
+function drawTiles() {
+  if (!ring || total < 256) return;
+  const end = paused ? frozenEnd : total, a = Math.max(end - Math.round(0.1 * fs), end - N, first);
+  let html = '';
+  AX.forEach((ax, c) => {
+    const s = stats(c, a, end);
+    let pk = '';
+    if (specAvg) {
+      let best = Math.ceil(50 / df);
+      for (let k = best + 1; k < specAvg[c].length; k++) if (specAvg[c][k] > specAvg[c][best]) best = k;
+      pk = `peak ${(best * df).toFixed(0)} Hz`;
+    }
+    html += `<div class="tile"><h3><span class="dot" style="background:var(${AXV[c]})"></span>${ax} axis</h3>
+      <div class="big">${fmtV(s.rms)} <small>RMS (AC), last 0.1 s</small></div>
+      <div class="sub">p-p ${fmtV(s.pp)} · DC ${fmtV(s.mean)} · ${pk}</div></div>`;
+  });
+  if (info && (info.rule || info.models)) {
+    const l = labels[labels.length - 1];
+    if (!l) html += `<div class="tile"><h3>Chatter detection</h3><div class="sub">waiting for the first window…</div></div>`;
+    else {
+      const name = l.rule || (l.models ? Object.values(l.models)[1] || Object.values(l.models)[0] : 'calibrating');
+      const icon = {chatter: '▲', stable: '●', 'no cutting': '○', uncertain: '◆', calibrating: '…'}[name] || '';
+      const sub = [];
+      if (l.level != null) sub.push(`level ×${l.level.toFixed(2)}`);
+      if (l.drop != null) sub.push(`entropy drop ${l.drop >= 0 ? '+' : ''}${l.drop.toFixed(3)}`);
+      html += `<div class="tile"><h3>Chatter rule ${l.rule ? '' : '(models only)'}</h3>
+        <div class="badge"><span style="color:var(${LAB[name] || '--muted'})">${icon}</span>${name}</div>
+        <div class="sub">${sub.join(' · ')}${name === 'calibrating' ? 'spindle on, tool in the air' : ''}</div>
+        ${l.models ? `<div class="sub">${Object.entries(l.models).map(([k, v]) => `${k}: <b>${v}</b>`).join(' · ')}</div>` : (info.models ? '<div class="sub">models: calibrating…</div>' : '')}
+      </div>`;
+    }
+  }
+  $('tiles').innerHTML = html;
+}
+
+// ---------------------------------------------------------------- canvas helpers
+function fit(cv) {
+  const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = +cv.getAttribute('height');
+  cv.style.height = h + 'px';
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [g, w, h];
+}
+function niceStep(range, target) {
+  const raw = range / target, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p;
+  return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p;
+}
+const PADL = 62, PADR = 12, FONT = '11px system-ui, sans-serif';
+
+// ---------------------------------------------------------------- time chart
+function drawTime() {
+  const cv = $('cTime'), [g, W, H] = fit(cv);
+  g.clearRect(0, 0, W, H);
+  if (!ring || total === 0) return;
+  const rule = info && (info.rule || info.models);
+  const stripH = rule ? 18 : 0, top = 6, bottom = 22;
+  const chans = [0, 1, 2].filter(c => show[c]);
+  const laneH = (H - top - bottom - stripH - 6) / chans.length;
+  const end = paused ? frozenEnd : total, n = Math.round(span * fs), a = end - n;
+  const pw = W - PADL - PADR, spp = n / pw;
+  const grid = css('--grid'), ink2 = css('--ink2'), muted = css('--muted');
+  g.font = FONT;
+  const tEnd = end / fs, t0 = tEnd - span;
+
+  // per-lane min/max envelope
+  const env = chans.map(c => {
+    const mn = new Float32Array(Math.ceil(pw)), mx = new Float32Array(Math.ceil(pw));
+    let sum = 0, cnt = 0;
+    const lo = Math.max(a, end - N, first);
+    for (let i = lo; i < end; i++) { sum += ring[c][i % N]; cnt++; }
+    const dc = $('dc').checked && cnt ? sum / cnt : 0;
+    for (let px = 0; px < mn.length; px++) {
+      const i0 = Math.max(Math.floor(a + px * spp), lo), i1 = Math.min(Math.max(Math.floor(a + (px + 1) * spp), Math.floor(a + px * spp) + 1), end);
+      let lo2 = Infinity, hi2 = -Infinity;
+      if (i0 < i1) for (let i = i0; i < i1; i++) { const v = ring[c][i % N] - dc; if (v < lo2) lo2 = v; if (v > hi2) hi2 = v; }
+      mn[px] = lo2; mx[px] = hi2;
+    }
+    let vmin = Infinity, vmax = -Infinity;
+    for (let px = 0; px < mn.length; px++) if (isFinite(mn[px])) { vmin = Math.min(vmin, mn[px]); vmax = Math.max(vmax, mx[px]); }
+    return {c, mn, mx, dc, vmin, vmax};
+  });
+  // y ranges: grow at once, shrink slowly, so the trace does not jump
+  const mode = $('yMode').value;
+  const target = e => {
+    if (mode === 'fixed') { const h = Math.max(+$('yFix').value || 0.05, 1e-6); return [-h + (e.dc ? 0 : 0), h]; }
+    let lo = e.vmin, hi = e.vmax;
+    if (mode === 'shared') { lo = Math.min(...env.map(x => x.vmin)); hi = Math.max(...env.map(x => x.vmax)); }
+    if (!isFinite(lo)) return [-1, 1];
+    const pad = Math.max((hi - lo) * 0.1, 1e-5);
+    return [lo - pad, hi + pad];
+  };
+  env.forEach(e => {
+    const [lo, hi] = target(e), s = scales[e.c];
+    if (mode === 'fixed' || !s) scales[e.c] = [lo, hi];
+    else scales[e.c] = [lo < s[0] ? lo : s[0] + (lo - s[0]) * 0.05, hi > s[1] ? hi : s[1] + (hi - s[1]) * 0.05];
+  });
+
+  env.forEach((e, li) => {
+    const y0 = top + li * laneH, [lo, hi] = scales[e.c];
+    const Y = v => y0 + laneH - 4 - (v - lo) / (hi - lo) * (laneH - 8);
+    // grid + y labels
+    const st = niceStep(hi - lo, 3);
+    g.strokeStyle = grid; g.lineWidth = 1; g.fillStyle = ink2; g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let v = Math.ceil(lo / st) * st; v <= hi; v += st) {
+      const y = Math.round(Y(v)) + 0.5;
+      g.beginPath(); g.moveTo(PADL, y); g.lineTo(W - PADR, y); g.stroke();
+      g.fillText(fmtV(Math.abs(v) < st / 1e6 ? 0 : v), PADL - 6, y);
+    }
+    g.save(); g.fillStyle = css(AXV[e.c]); g.textAlign = 'left'; g.textBaseline = 'top';
+    g.font = '600 11px system-ui, sans-serif'; g.fillText(AX[e.c], PADL + 4, y0 + 2); g.restore();
+    // trace: min/max envelope when compressed, a line when zoomed in
+    g.save(); g.beginPath(); g.rect(PADL, y0, pw, laneH); g.clip();
+    g.strokeStyle = css(AXV[e.c]); g.fillStyle = css(AXV[e.c]); g.lineWidth = spp > 2 ? 1 : 1.5;
+    g.beginPath();
+    if (spp > 2) {
+      for (let px = 0; px < e.mn.length; px++) if (isFinite(e.mn[px])) {
+        g.moveTo(PADL + px + 0.5, Y(e.mx[px]) - 0.5); g.lineTo(PADL + px + 0.5, Y(e.mn[px]) + 0.5);
+      }
+    } else {
+      let first = true;
+      for (let i = Math.max(a, end - N, first); i < end; i++) {
+        const x = PADL + (i - a + 0.5) / spp, y = Y(ring[e.c][i % N] - e.dc);
+        if (first) { g.moveTo(x, y); first = false; } else g.lineTo(x, y);
+      }
+    }
+    g.stroke(); g.restore();
+  });
+
+  // label strip
+  const yS = top + chans.length * laneH + 3;
+  if (rule) {
+    g.fillStyle = css('--grid'); g.fillRect(PADL, yS, pw, stripH - 4);
+    const hw = 256 / fs;
+    for (const l of labels) {
+      if (l.t + hw < t0 || l.t - hw > tEnd) continue;
+      const name = l.rule || (l.models ? Object.values(l.models)[1] : 'calibrating');
+      const x0 = PADL + (l.t - hw - t0) / span * pw, x1 = PADL + (l.t + hw - t0) / span * pw;
+      g.fillStyle = css(LAB[name] || '--muted');
+      g.fillRect(Math.max(x0, PADL), yS, Math.min(x1, W - PADR) - Math.max(x0, PADL) + 0.5, stripH - 4);
+    }
+    g.fillStyle = ink2; g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText(info.rule ? 'rule' : 'model', PADL - 6, yS + (stripH - 4) / 2);
+  }
+  // time axis (seconds since the scope started)
+  const yA = H - bottom + 4, st = niceStep(span, Math.max(3, Math.floor(pw / 110)));
+  g.fillStyle = ink2; g.textAlign = 'center'; g.textBaseline = 'top'; g.strokeStyle = muted;
+  const dec = Math.max(0, -Math.floor(Math.log10(st)));
+  for (let t = Math.ceil(t0 / st) * st; t <= tEnd + 1e-9; t += st) {
+    const x = PADL + (t - t0) / span * pw;
+    g.beginPath(); g.moveTo(x, yA - 4); g.lineTo(x, yA); g.stroke();
+    g.fillText(t.toFixed(dec) + ' s', x, yA + 2);
+  }
+  // hover crosshair + tooltip
+  if (hover && hover.cv === cv && hover.x >= PADL && hover.x <= W - PADR) {
+    g.strokeStyle = muted; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(Math.round(hover.x) + 0.5, top); g.lineTo(Math.round(hover.x) + 0.5, yS + stripH); g.stroke();
+    const i = Math.floor(a + (hover.x - PADL) * spp);
+    if (i >= Math.max(end - N, first) && i < end) {
+      let h = `<b>${(i / fs).toFixed(4)} s</b>`;
+      env.forEach(e => {
+        const px = Math.floor(hover.x - PADL), v = ring[e.c][i % N] - e.dc;
+        h += `<br><span class="dot" style="background:var(${AXV[e.c]})"></span> ${AX[e.c]} ${fmtV(v)}` +
+          (spp > 2 && isFinite(e.mn[px]) ? ` <span style="color:var(--ink2)">(${fmtV(e.mn[px])} … ${fmtV(e.mx[px])})</span>` : '');
+      });
+      if (rule) {
+        const t = i / fs; let best = null;
+        for (const l of labels) if (Math.abs(l.t - t) <= 256 / fs) best = l;
+        if (best) h += `<br>rule: <b>${best.rule || '—'}</b>` + (best.models ? '<br>' + Object.entries(best.models).map(([k, v]) => `${k}: ${v}`).join('<br>') : '');
+      }
+      showTip(h);
+    }
+  }
+  $('tInfo').textContent = `volts${$('dc').checked ? ', DC removed' : ''} · ${span < 1 ? span * 1000 + ' ms' : span + ' s'} on screen${paused ? ' · PAUSED' : ''}`;
+}
+
+// ---------------------------------------------------------------- spectrum
+let dbRange = null;
+function drawSpec() {
+  const cv = $('cSpec'), [g, W, H] = fit(cv);
+  g.clearRect(0, 0, W, H);
+  if (!specAvg) return;
+  const fMax = Math.min(+$('fMax').value, fs / 2), top = 8, bottom = 24, pw = W - PADL - PADR, ph = H - top - bottom;
+  const kMax = Math.min(Math.floor(fMax / df), specAvg[0].length - 1);
+  const db = specAvg.map(row => row.map(v => 10 * Math.log10(v + 1e-20)));
+  let hi = -Infinity;
+  [0, 1, 2].forEach(c => { if (show[c]) for (let k = 1; k <= kMax; k++) hi = Math.max(hi, db[c][k]); });
+  const want = [Math.ceil(hi / 10) * 10 - 80, Math.ceil(hi / 10) * 10 + 5];
+  if (!dbRange || want[1] > dbRange[1] || want[1] < dbRange[1] - 15) dbRange = want;
+  const [lo, top_] = dbRange;
+  const X = f => PADL + f / fMax * pw, Y = v => top + (top_ - v) / (top_ - lo) * ph;
+  const grid = css('--grid'), ink2 = css('--ink2'), muted = css('--muted');
+  g.font = FONT; g.lineWidth = 1;
+  g.strokeStyle = grid; g.fillStyle = ink2; g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (let v = Math.ceil(lo / 20) * 20; v <= top_; v += 20) { const y = Math.round(Y(v)) + .5; g.beginPath(); g.moveTo(PADL, y); g.lineTo(W - PADR, y); g.stroke(); g.fillText(v + ' dB', PADL - 6, y); }
+  const fs_ = niceStep(fMax, Math.max(3, Math.floor(pw / 90)));
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  for (let f = 0; f <= fMax + 1e-6; f += fs_) { const x = X(f); g.strokeStyle = muted; g.beginPath(); g.moveTo(x, H - bottom); g.lineTo(x, H - bottom + 4); g.stroke(); g.fillText(f >= 1000 ? f / 1000 + ' k' : f, x, H - bottom + 6); }
+  g.textAlign = 'right'; g.fillText('Hz', PADL - 12, H - bottom + 6);
+  // spindle harmonics
+  if (rpm) {
+    const f1 = rpm / 60; g.save(); g.setLineDash([3, 4]); g.strokeStyle = muted; g.globalAlpha = 0.6;
+    for (let f = f1; f <= fMax; f += f1) { const x = Math.round(X(f)) + .5; g.beginPath(); g.moveTo(x, top); g.lineTo(x, H - bottom); g.stroke(); }
+    g.restore();
+  }
+  g.save(); g.beginPath(); g.rect(PADL, top, pw, ph); g.clip(); g.lineWidth = 1.5; g.lineJoin = 'round';
+  [0, 1, 2].forEach(c => {
+    if (!show[c]) return;
+    g.strokeStyle = css(AXV[c]); g.beginPath();
+    for (let k = 0; k <= kMax; k++) { const x = X(k * df), y = Y(db[c][k]); k ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.stroke();
+  });
+  g.restore();
+  if (hover && hover.cv === cv && hover.x >= PADL && hover.x <= W - PADR) {
+    const k = Math.round((hover.x - PADL) / pw * fMax / df);
+    if (k >= 0 && k <= kMax) {
+      const x = Math.round(X(k * df)) + .5;
+      g.strokeStyle = muted; g.beginPath(); g.moveTo(x, top); g.lineTo(x, H - bottom); g.stroke();
+      let h = `<b>${(k * df).toFixed(1)} Hz</b>`;
+      [0, 1, 2].forEach(c => { if (show[c]) h += `<br><span class="dot" style="background:var(${AXV[c]})"></span> ${AX[c]} ${db[c][k].toFixed(1)} dB`; });
+      if (rpm) h += `<br><span style="color:var(--ink2)">${(k * df / (rpm / 60)).toFixed(2)} × spindle frequency</span>`;
+      showTip(h);
+    }
+  }
+  $('sInfo').textContent = `PSD, dB re 1 V²/Hz · ${df.toFixed(1)} Hz bins · ${$('specWin').value} s window` + (rpm ? ` · dashed: spindle harmonics (${(rpm / 60).toFixed(1)} Hz)` : '');
+}
+
+// ---------------------------------------------------------------- waterfall
+// sequential single-hue ramp (blue), surface -> dark in light mode, surface -> light in dark mode
+const RAMP_L = ['#fcfcfb', '#cde2fb', '#86b6ef', '#3987e5', '#256abf', '#104281', '#0d366b'];
+const RAMP_D = ['#1a1a19', '#0d366b', '#184f95', '#256abf', '#3987e5', '#86b6ef', '#cde2fb'];
+function lut(stops) {
+  const rgb = stops.map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16))), out = [];
+  for (let i = 0; i < 256; i++) {
+    const p = i / 255 * (rgb.length - 1), j = Math.min(Math.floor(p), rgb.length - 2), f = p - j;
+    out.push(rgb[j].map((v, q) => Math.round(v + (rgb[j + 1][q] - v) * f)));
+  }
+  return out;
+}
+let LUT = null, lutDark = null, fallFloor = null;
+function pushFall() {
+  const row = new Float32Array(spec[0].length);
+  for (let k = 0; k < row.length; k++) { let m = -400; for (let c = 0; c < 3; c++) if (show[c]) m = Math.max(m, spec[c][k]); row[k] = m; }
+  fallRows.unshift(row); if (fallRows.length > FALL_ROWS) fallRows.pop();
+}
+function drawFall() {
+  const cv = $('cFall'), [g, W, H] = fit(cv);
+  g.clearRect(0, 0, W, H);
+  if (!fallRows.length || !dbRange) return;
+  const dark = css('--surface').toLowerCase() !== '#fcfcfb';
+  if (LUT === null || lutDark !== dark) { LUT = lut(dark ? RAMP_D : RAMP_L); lutDark = dark; }
+  const fMax = Math.min(+$('fMax').value, fs / 2), top = 8, bottom = 24, pw = W - PADL - PADR, ph = H - top - bottom;
+  const kMax = Math.min(Math.floor(fMax / df), fallRows[0].length - 1);
+  // colour scale: from just above the noise floor (median level) to the top of the spectrum chart
+  const med = Array.from(fallRows[0].slice(1, kMax + 1)).sort((p, q) => p - q)[kMax >> 1];
+  fallFloor = fallFloor == null ? med : 0.95 * fallFloor + 0.05 * med;
+  const img = g.createImageData(kMax + 1, FALL_ROWS), lo = fallFloor - 3, hi = Math.max(dbRange[1], lo + 20);
+  fallRows.forEach((row, r) => {
+    for (let k = 0; k <= kMax; k++) {
+      const q = Math.max(0, Math.min(255, Math.round((row[k] - lo) / (hi - lo) * 255))), o = (r * (kMax + 1) + k) * 4, c = LUT[q];
+      img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+    }
+  });
+  const off = new OffscreenCanvas(kMax + 1, FALL_ROWS); off.getContext('2d').putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = false;
+  g.drawImage(off, PADL, top, pw, ph);
+  g.font = FONT; g.fillStyle = css('--ink2'); g.strokeStyle = css('--muted');
+  const fs_ = niceStep(fMax, Math.max(3, Math.floor(pw / 90)));
+  g.textAlign = 'right'; g.textBaseline = 'top'; g.fillText('Hz', PADL - 12, H - bottom + 6);
+  g.textAlign = 'center';
+  for (let f = 0; f <= fMax + 1e-6; f += fs_) { const x = PADL + f / fMax * pw; g.beginPath(); g.moveTo(x, H - bottom); g.lineTo(x, H - bottom + 4); g.stroke(); g.fillText(f >= 1000 ? f / 1000 + ' k' : f, x, H - bottom + 6); }
+  g.textAlign = 'right'; g.textBaseline = 'middle'; g.fillText('now', PADL - 6, top + 6); g.fillText('older', PADL - 6, H - bottom - 6);
+  if (hover && hover.cv === cv && hover.x >= PADL && hover.x <= W - PADR && hover.y >= top && hover.y <= H - bottom) {
+    const k = Math.round((hover.x - PADL) / pw * kMax), r = Math.floor((hover.y - top) / ph * FALL_ROWS);
+    if (fallRows[r]) showTip(`<b>${(k * df).toFixed(1)} Hz</b><br>${fallRows[r][k].toFixed(1)} dB<br><span style="color:var(--ink2)">${(r * 0.05).toFixed(1)} s ago (approx.)</span>`);
+  }
+}
+
+// ---------------------------------------------------------------- hover + loop
+function showTip(h) { const t = $('tip'); t.innerHTML = h; t.style.display = 'block'; tipShown = true; }
+let tipShown = false, mouse = {x: 0, y: 0};
+for (const id of ['cTime', 'cSpec', 'cFall']) {
+  const cv = $(id);
+  cv.addEventListener('pointermove', e => { const r = cv.getBoundingClientRect(); hover = {cv, x: e.clientX - r.left, y: e.clientY - r.top}; mouse = {x: e.clientX, y: e.clientY}; dirty = true; });
+  cv.addEventListener('pointerleave', () => { hover = null; dirty = true; });
+}
+let lastTiles = 0;
+function frame(ts) {
+  if (dirty || hover) {
+    tipShown = false;
+    drawTime(); drawSpec(); drawFall();
+    const t = $('tip');
+    if (!tipShown) t.style.display = 'none';
+    else { const w = t.offsetWidth; t.style.left = Math.min(mouse.x + 14, innerWidth - w - 8) + 'px'; t.style.top = (mouse.y + 14) + 'px'; }
+    dirty = false;
+  }
+  if (ts - lastTiles > 200) { drawTiles(); lastTiles = ts; }
+  requestAnimationFrame(frame);
+}
+addEventListener('resize', () => { dirty = true; });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { dirty = true; });
+poll();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chatter Monitor</title>
+<meta name="description" content="Live chatter detection for micromilling from accelerometer signals: time signals, FFT, STFT waterfall, dominant frequencies and process state.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="./" aria-label="Chatter Monitor home">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12h3l2-6 4 12 3-9 2 3h4"/></svg></span>
+      <span class="brand-name">Chatter Monitor</span>
+    </a>
+    <div class="top-controls">
+      <div class="seg" data-key="source" aria-label="Data source"></div>
+      <div class="status" id="status" role="status"><i></i><span>Loading…</span></div>
+      <button class="btn" id="pauseBtn" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg><span>Pause</span></button>
+      <button class="btn rec" id="recBtn" type="button" hidden><i aria-hidden="true"></i><span>Record</span></button>
+      <button class="btn primary" id="inputsBtn" type="button" aria-controls="sheet" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>Inputs</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<main class="wrap">
+
+  <!-- Outputs -->
+  <section class="kpis" aria-label="Outputs">
+    <article class="card kpi kpi-state">
+      <h2 class="eyebrow">Process state</h2>
+      <div class="state-now">
+        <div class="state-code" id="stateCode">–</div>
+        <div>
+          <div class="state-name" id="stateName" aria-live="polite">Waiting for data</div>
+          <div class="sub" id="stateSub">&nbsp;</div>
+        </div>
+      </div>
+      <ol class="state-steps" id="stateSteps" aria-label="States">
+        <li data-s="0"><b>0</b><span>Air cutting</span></li>
+        <li data-s="1"><b>1</b><span>Stable</span></li>
+        <li data-s="2"><b>2</b><span>Transition</span></li>
+        <li data-s="3"><b>3</b><span>Chatter</span></li>
+      </ol>
+    </article>
+    <article class="card kpi">
+      <h2 class="eyebrow">RMS · <span class="selName">Channel 2</span></h2>
+      <div class="big"><span id="rmsVal">–</span><small class="unitLbl">V</small></div>
+      <div class="sub" id="rmsSub">&nbsp;</div>
+    </article>
+    <article class="card kpi">
+      <h2 class="eyebrow">Dominant frequency</h2>
+      <div class="big"><span id="domVal">–</span><small>Hz</small></div>
+      <div class="sub" id="domSub">&nbsp;</div>
+    </article>
+  </section>
+
+  <!-- Time signals -->
+  <section class="row-signals">
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <h2>Accelerometers</h2>
+          <p class="sub" id="chCount">&nbsp;</p>
+        </div>
+        <div class="head-tools">
+          <div class="seg" data-key="spanAll" aria-label="Time span of all channels"></div>
+          <button class="btn" id="addCh" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Add</span></button>
+        </div>
+      </div>
+      <ul class="ch-list" id="chList"></ul>
+      <div class="axis"><span id="spanAllLbl">−1 s</span><span>now</span></div>
+    </article>
+
+    <article class="card single">
+      <div class="card-head">
+        <div>
+          <h2><span class="dot" id="selDot"></span><span class="selName">Channel 2</span></h2>
+          <p class="sub" id="selSub">&nbsp;</p>
+        </div>
+        <div class="head-tools">
+          <label class="vh" for="selPick">Real-time channel</label>
+          <span class="select"><select id="selPick" data-key="sel"></select></span>
+        </div>
+      </div>
+      <canvas id="cvSingle" class="cv-single" role="img" aria-label="Waveform of the real-time channel"></canvas>
+      <div class="axis"><span id="spanOneLbl">−100 ms</span><span>now</span></div>
+      <div class="foot-tools">
+        <div class="seg" data-key="spanOne" aria-label="Time span of the real-time channel"></div>
+        <div class="mini-stats"><span>Peak <b id="selPeak">–</b></span><span>Crest <b id="selCrest">–</b></span></div>
+      </div>
+    </article>
+  </section>
+
+  <!-- Frequency -->
+  <section class="row-freq">
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <h2>FFT</h2>
+          <p class="sub" id="fftSub">&nbsp;</p>
+        </div>
+        <div class="head-tools">
+          <div class="seg" data-key="win" aria-label="Window length"></div>
+          <div class="seg" data-key="fftScale" aria-label="Magnitude scale"></div>
+        </div>
+      </div>
+      <canvas id="cvFFT" class="cv-freq" role="img" aria-label="Amplitude spectrum of the real-time channel"></canvas>
+      <div class="axis" id="fftAxis"></div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <h2>STFT waterfall</h2>
+          <p class="sub" id="wfSub">&nbsp;</p>
+        </div>
+        <div class="head-tools">
+          <div class="seg" data-key="hist" aria-label="Waterfall history"></div>
+        </div>
+      </div>
+      <div class="wf-box">
+        <div class="wf-time" aria-hidden="true"><span>now</span><span id="wfMid"></span><span id="wfOld"></span></div>
+        <canvas id="cvWF" class="cv-freq" role="img" aria-label="Spectrogram of the real-time channel, newest at the top"></canvas>
+      </div>
+      <div class="axis wf-axis" id="wfAxis"></div>
+    </article>
+
+    <article class="card top10">
+      <div class="card-head">
+        <div>
+          <h2>Dominant frequencies</h2>
+          <p class="sub" id="topSub">Top 10 by magnitude</p>
+        </div>
+      </div>
+      <ol class="peaks" id="peaks"></ol>
+    </article>
+  </section>
+
+  <!-- State history -->
+  <section class="card timeline">
+    <div class="card-head">
+      <div>
+        <h2>State history</h2>
+        <p class="sub">Last 30 s</p>
+      </div>
+      <ul class="legend" aria-label="Legend">
+        <li><i class="s0"></i>0 · Air cutting</li>
+        <li><i class="s1"></i>1 · Stable</li>
+        <li><i class="s2"></i>2 · Transition</li>
+        <li><i class="s3"></i>3 · Chatter</li>
+      </ul>
+    </div>
+    <canvas id="cvTL" class="cv-tl" role="img" aria-label="Process state over the last 30 seconds"></canvas>
+    <div class="axis"><span>−30 s</span><span>−15 s</span><span>now</span></div>
+  </section>
+
+  <footer class="about">
+    <h2>About</h2>
+    <p>Chatter Monitor shows what one or more accelerometers on a micromilling spindle measure while the machine cuts. You see the time signals, their spectrum, a waterfall of recent spectra, the strongest frequencies and the process state: <b>0</b> air cutting, <b>1</b> stable, <b>2</b> transition, <b>3</b> chatter.</p>
+    <p>The state comes from a CNN + GRU network trained on the raw signal, checked against an entropy rule on the spectrum. When the two disagree while the tool is cutting, the state is <i>transition</i>.</p>
+    <p><b>Demo</b> plays three test recordings (20 kHz, never used for training). <b>Live</b> reads the DAQ through <code>scope.py</code> running on the measuring PC; open <code>http://localhost:8050/app/</code> there, or choose Live on this page and allow access to the local network when the browser asks.</p>
+    <p><a href="https://github.com/krishna27-spec/323_proj">Source code on GitHub</a></p>
+  </footer>
+</main>
+
+<!-- Inputs sheet -->
+<div class="scrim" id="scrim" hidden></div>
+<aside class="sheet" id="sheet" aria-label="Input parameters" aria-hidden="true">
+  <div class="sheet-head">
+    <h2>Input parameters</h2>
+    <button class="icon-btn" id="sheetClose" type="button" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div class="sheet-body">
+
+    <h3 class="group-title">Channels</h3>
+    <div class="group">
+      <div class="g-row">
+        <div><div class="g-lbl">Number of channels</div><div class="g-sub" id="nChSub">&nbsp;</div></div>
+        <div class="stepper">
+          <button type="button" id="chMinus" aria-label="Remove the last channel">−</button>
+          <span id="nChVal">4</span>
+          <button type="button" id="chPlus" aria-label="Add a channel">+</button>
+        </div>
+      </div>
+      <div class="g-row">
+        <label class="g-lbl" for="selPick2">Real-time channel</label>
+        <span class="select"><select id="selPick2" data-key="sel"></select></span>
+      </div>
+      <div id="chEdit"></div>
+    </div>
+
+    <h3 class="group-title">Acquisition</h3>
+    <div class="group">
+      <div class="g-row">
+        <div class="g-lbl">Source</div>
+        <div class="seg" data-key="source" aria-label="Data source"></div>
+      </div>
+      <div class="g-row" id="rowDemo">
+        <label class="g-lbl" for="demoPick">Recording</label>
+        <span class="select"><select id="demoPick" data-key="demoRun"></select></span>
+      </div>
+      <div class="g-row" id="rowLive">
+        <label class="g-lbl" for="liveUrl">Server</label>
+        <span class="inline"><input id="liveUrl" class="field wide" type="url" spellcheck="false" data-key="liveUrl"><button class="btn" type="button" id="connectBtn">Connect</button></span>
+      </div>
+      <div class="g-row">
+        <div><label class="g-lbl" for="fsPick">Sampling frequency</label><div class="g-sub" id="fsSub">&nbsp;</div></div>
+        <span class="select"><select id="fsPick">
+          <option value="10000">10 kHz</option>
+          <option value="20000">20 kHz</option>
+          <option value="25600">25.6 kHz</option>
+          <option value="51200">51.2 kHz</option>
+        </select></span>
+      </div>
+    </div>
+
+    <h3 class="group-title">Analysis</h3>
+    <div class="group">
+      <div class="g-row">
+        <div><div class="g-lbl">Window length</div><div class="g-sub" id="winSub">&nbsp;</div></div>
+        <div class="seg" data-key="win" aria-label="Window length"></div>
+      </div>
+      <div class="g-row">
+        <label class="g-lbl" for="wfnPick">Window function</label>
+        <span class="select"><select id="wfnPick" data-key="wfn">
+          <option value="hann">Hann</option>
+          <option value="hamming">Hamming</option>
+          <option value="flattop">Flat top</option>
+          <option value="rect">Rectangular</option>
+        </select></span>
+      </div>
+      <div class="g-row">
+        <div class="g-lbl">Overlap</div>
+        <div class="seg" data-key="overlap" aria-label="Overlap"></div>
+      </div>
+      <div class="g-row">
+        <label class="g-lbl" for="fmaxPick">Frequency range</label>
+        <span class="select"><select id="fmaxPick" data-key="fmax">
+          <option value="0">0 to Nyquist</option>
+          <option value="5000">0 to 5 kHz</option>
+          <option value="2000">0 to 2 kHz</option>
+          <option value="1000">0 to 1 kHz</option>
+        </select></span>
+      </div>
+      <div class="g-row">
+        <div class="g-lbl">Waterfall history</div>
+        <div class="seg" data-key="hist" aria-label="Waterfall history"></div>
+      </div>
+      <div class="g-row">
+        <div class="g-lbl">Dynamic range</div>
+        <div class="seg" data-key="dyn" aria-label="Dynamic range"></div>
+      </div>
+    </div>
+
+    <h3 class="group-title">Display</h3>
+    <div class="group">
+      <div class="g-row">
+        <div><div class="g-lbl">Units</div><div class="g-sub">g uses each channel's scaling factor</div></div>
+        <div class="seg" data-key="units" aria-label="Units"></div>
+      </div>
+      <div class="g-row">
+        <div class="g-lbl">Span, all channels</div>
+        <div class="seg" data-key="spanAll" aria-label="Time span of all channels"></div>
+      </div>
+      <div class="g-row">
+        <div class="g-lbl">Span, real-time channel</div>
+        <div class="seg" data-key="spanOne" aria-label="Time span of the real-time channel"></div>
+      </div>
+      <div class="g-row">
+        <label class="g-lbl" for="yPick">Y scale</label>
+        <span class="select"><select id="yPick" data-key="yScale">
+          <option value="auto">Auto</option>
+          <option value="0.01">± 0.01</option>
+          <option value="0.05">± 0.05</option>
+          <option value="0.1">± 0.1</option>
+          <option value="0.5">± 0.5</option>
+          <option value="1">± 1</option>
+          <option value="2">± 2</option>
+          <option value="5">± 5</option>
+        </select></span>
+      </div>
+      <div class="g-row">
+        <label class="g-lbl" for="dcChk">Remove DC</label>
+        <input class="switch" id="dcChk" type="checkbox" role="switch" data-key="dc">
+      </div>
+    </div>
+
+    <button class="btn link" id="resetBtn" type="button">Reset all inputs</button>
+  </div>
+</aside>
+
+<script src="app.js"></script>
+</body>
+</html>

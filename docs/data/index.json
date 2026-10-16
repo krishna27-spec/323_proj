@@ -1,0 +1,20 @@
+{
+ "runs": [
+  {
+   "id": "20k_test",
+   "title": "Test run \u00b7 20,000 rpm",
+   "seconds": 16.96
+  },
+  {
+   "id": "60k_test",
+   "title": "Test run \u00b7 60,000 rpm",
+   "seconds": 10.48
+  },
+  {
+   "id": "100k_test",
+   "title": "Test run \u00b7 100,000 rpm",
+   "seconds": 9.02
+  }
+ ],
+ "note": "rule: 0 no cutting, 1 stable, 2 chatter, -1 uncertain; model (CNN + GRU): 0 no cutting, 1 stable, 2 chatter"
+}
